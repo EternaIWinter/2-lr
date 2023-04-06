@@ -37,78 +37,86 @@ def output(imap, letter_ids):
         i+=1
     return None
 
-def main():
+def check(flag_revers = False):
+    choice = input(' ') 
+    if flag_revers:
+        if choice == 'д' or choice == 'y':
+            return True
+    if choice == 'n' or choice == 'н':
+        print('Удачи')
+        return True
+    return False
+
+def login_to_account():
     login = 'vechnay.zima@yandex.ru'#''
     email_pass = ''
-    file_key = ''
-    file_sign = ''
-    mess = ''
-    out_menu = '''        1 - посмотреть список последних писем
-        2 - посмотреть выбранное письмо
-        3 - выбрать сертификат с ключом
-        4 - проверить электронную подпись
-        5 - выход'''
     while True:
         print("Вход в аккаунт: \n")
         login, email_pass = login_email()
         if login == '':
             print('Повторить попытку?')
-            choice = input(' ')
-            if choice == 'д' or choice == 'y':
+            if check(flag_revers=True):
                 continue
             else:
                 print('Удачи')
                 break
         else:
             break
-    
     imap = imaplib.IMAP4_SSL('imap.yandex.ru')
     imap.login(login, email_pass)
     imap.select("INBOX")
+    return imap
+
+def letter_selection(imap, letter_ids):
+    flag_sign = False
+    select_letter_id = int(input('Введите номер письма: ')) - 1
+    res, msg = imap.fetch(letter_ids[select_letter_id], '(RFC822)')
+    message = email.message_from_bytes(msg[0][1])
+    body = get_body(message)
+    for part in message.walk():
+        filename = part.get_filename()
+        if filename:
+            flag_sign = True
+            with open(filename, 'wb') as file:
+                file.write(part.get_payload(decode=True))
+    return body, flag_sign
+
+def check_sign(body):
+    with open(input('Укажите файл с ключами: '), mode='rb') as file:
+        keydata = file.read()
+    PrivK = serialization.load_pem_private_key(keydata, password=None)    
+    PubK = PrivK.public_key()
+    hash_object = hashlib.sha256(body.encode('utf-8'))
+    hash = hash_object.digest()
+    with open('sign.txt', 'rb') as sign_file:
+        sign_b64 = sign_file.read()
+    sign = base64.b64decode(sign_b64)
+    try:
+        PubK.verify(sign, hash,
+                          padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+                          hashes.SHA256())
+        print("\n***Подпись верна.***\n")
+    except:
+        print("\n***Подпись недействительна.***\n") 
+
+def main():
+    imap = login_to_account()
     status, letter_ids = imap.search(None, 'ALL')   
     letter_ids = letter_ids[0].split()[-5:]
 
     while True:
-        flag_sign = False
         output(imap, letter_ids)
         print("Хотите выбрать письмо?")
-        choice = input(' ')
-        if choice == 'n' or choice == 'н':
-            print('Удачи')
+        if check():
             break
-        select_letter_id = int(input('Введите номер письма: ')) - 1
-        res, msg = imap.fetch(letter_ids[select_letter_id], '(RFC822)')
-        message = email.message_from_bytes(msg[0][1])
-        body = get_body(message)
-        for part in message.walk():
-            filename = part.get_filename()
-            if filename:
-                flag_sign = True
-                with open(filename, 'wb') as f:
-                    f.write(part.get_payload(decode=True))
+
+        body,flag_sign = letter_selection(imap, letter_ids)
+
         if flag_sign:
             print("Хотите проверить подпись письма?")
-            choice = input(' ')
-            if choice == 'n' or choice == 'н':
+            if check():
                 continue
-            with open(input('Укажите файл с ключами: '), mode='rb') as file:
-                keydata = file.read()
-            PrivK = serialization.load_pem_private_key(keydata, password=None)    
-            PubK = PrivK.public_key()
-
-            hash_object = hashlib.sha256(body.encode('utf-8'))
-            hash = hash_object.digest()
-            with open('sign.txt', 'rb') as sign_file:
-                sign_b64 = sign_file.read()
-            sign = base64.b64decode(sign_b64)
-            try:
-                PubK.verify(sign, hash,
-                                  padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
-                                  hashes.SHA256())
-                print("\n***Подпись верна.***\n")
-            except:
-                print("\n***Подпись недействительна.***\n")        
-
+            check_sign(body)
     return None
 if __name__ == '__main__':
     main()
